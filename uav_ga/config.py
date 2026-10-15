@@ -91,9 +91,9 @@ SEED = 42
 POP_SIZE = 100
 GENERATIONS = 200
 CROSSOVER_RATE = 0.9
-MUTATION_RATE = 0.1        # probability that one gene is mutated
+MUTATION_RATE = 0.01       # probability that one gene is mutated (tuned: see sensitivity analysis)
 SELECTION = "tournament"   # "tournament", "rank" or "roulette"
-TOURNAMENT_K = 3           # selection pressure of tournament selection
+TOURNAMENT_K = 5           # selection pressure of tournament selection (tuned: see sensitivity analysis)
 RANK_PRESSURE = 1.7        # selection pressure of linear rank selection (1..2)
 ELITISM = 0.05             # top 5 % are copied unchanged to the next generation
 
@@ -115,6 +115,11 @@ TARGET_FITNESS = None      # stop early if this fitness is reached (None = off)
 # 6. Experiments
 # ---------------------------------------------------------------------------
 RESULTS_DIR = "results"
+# The sweeps change ONE setting at a time around the INITIAL configuration
+# (mutation rate 0.1, tournament k = 3). The best values found there were then
+# used as the final defaults above (MUTATION_RATE = 0.01, TOURNAMENT_K = 5).
+SWEEP_BASE_MUTATION_RATE = 0.1
+SWEEP_BASE_TOURNAMENT_K = 3
 SWEEP_SEEDS = [1, 2, 3]            # seeds for each sensitivity setting
 SWEEP_GENERATIONS = 100            # generations per sensitivity run
 SWEEP_POP_SIZES = [20, 50, 100, 200]

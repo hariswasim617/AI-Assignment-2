@@ -102,7 +102,8 @@ def run_sweep(env: Environment, out: str, name: str, parameter: str, values: lis
         for seed in seeds:
             # only ONE parameter changes, everything else keeps its default value;
             # stagnation is switched off so every run lasts the same number of generations
-            settings = {"pop_size": pop_size, parameter: value}
+            settings = {"pop_size": pop_size, "mutation_rate": cfg.SWEEP_BASE_MUTATION_RATE,
+                        "tournament_k": cfg.SWEEP_BASE_TOURNAMENT_K, parameter: value}
             ga = GeneticAlgorithm(env, seed=seed, generations=generations, verbose=False,
                                   stagnation_patience=10 ** 9, **settings)
             best = ga.run()
@@ -150,6 +151,28 @@ def run_sensitivity(env: Environment, out: str, quick: bool) -> None:
                .reset_index())
     summary.to_csv(os.path.join(out, "sensitivity_summary.csv"), index=False)
     print(summary.to_string(index=False))
+    run_combined_check(env, out, seeds, gens, pop)
+
+
+def run_combined_check(env: Environment, out: str, seeds: list[int], generations: int, pop_size: int) -> None:
+    """Run the best mutation rate and the best tournament k of the sweeps TOGETHER.
+
+    The sweeps change one setting at a time, so we still have to check that the
+    two best values also work well in combination before using them as defaults.
+    """
+    summary = pd.read_csv(os.path.join(out, "sensitivity_summary.csv"))
+    best_of = lambda name: summary[summary["parameter"] == name].sort_values("best_mean").iloc[-1]["value"]
+    best_rate, best_k = float(best_of("mutation_rate")), int(float(best_of("tournament_k")))
+    rows = []
+    for seed in seeds:
+        ga = GeneticAlgorithm(env, seed=seed, generations=generations, pop_size=pop_size, verbose=False,
+                              mutation_rate=best_rate, tournament_k=best_k, stagnation_patience=10 ** 9)
+        best = ga.run()
+        rows.append({"mutation_rate": best_rate, "tournament_k": best_k, "seed": seed,
+                     "final_best_fitness": best.fitness, "runtime_s": ga.runtime_s,
+                     "immigrant_generations": sum(h["immigrants"] > 0 for h in ga.history)})
+        print(f"  [combined] mutation_rate = {best_rate}, k = {best_k}, seed {seed}: best {best.fitness:.4f}")
+    pd.DataFrame(rows).to_csv(os.path.join(out, "combined_check.csv"), index=False)
 
 
 # ---------------------------------------------------------------------------
