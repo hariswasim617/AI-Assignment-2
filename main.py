@@ -58,7 +58,8 @@ def run_main(env: Environment, out: str, seed: int, pop_size: int, generations: 
     gens = snapshot_generations(last)
     viz.plot_environment(env, os.path.join(out, "environment.png"))
     viz.plot_convergence(history, os.path.join(out, "convergence.png"))
-    viz.plot_diversity(history, os.path.join(out, "diversity.png"))
+    viz.plot_diversity(history, os.path.join(out, "diversity.png"),
+                       threshold=cfg.DIVERSITY_THRESHOLD * history["diversity"].iloc[0])
     viz.plot_objectives(history, os.path.join(out, "objectives_over_time.png"))
     viz.plot_routes_over_generations([(g, ga.best_per_generation[g]) for g in gens], env,
                                      os.path.join(out, "paths_generations.png"))

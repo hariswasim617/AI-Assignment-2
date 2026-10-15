@@ -80,19 +80,35 @@ def draw_routes(ax: plt.Axes, chrom: Chromosome, env: Environment, show_targets:
                    edgecolors="black", linewidths=1.0, zorder=7)
 
 
-def map_legend(ax: plt.Axes, n_drones: int, loc: str = "upper right") -> None:
+def legend_handles(n_drones: int, with_routes: bool = True) -> list:
+    """Legend entries for the map symbols (route entries only if routes are drawn)."""
     handles = [Line2D([], [], color=DRONE_COLOURS[d], lw=2.2, label=f"Drone {d + 1}") for d in range(n_drones)]
+    if with_routes:
+        handles += [Line2D([], [], color="grey", lw=2.2, label="sensor ON"),
+                    Line2D([], [], color="grey", lw=1.1, ls="--", label="sensor OFF")]
     handles += [
-        Line2D([], [], color="grey", lw=2.2, label="sensor ON"),
-        Line2D([], [], color="grey", lw=1.1, ls="--", label="sensor OFF"),
         Patch(facecolor=NOFLY_COLOUR, hatch="////", label="no-fly zone"),
         Patch(facecolor="#f4a261", label="hazard (darker = worse)"),
         Line2D([], [], color="black", ls="--", label="priority zone (P >= 0.5)"),
-        Line2D([], [], marker="o", ls="", mfc="black", mec="black", label="target detected"),
-        Line2D([], [], marker="o", ls="", mfc="white", mec="black", label="target missed"),
-        Line2D([], [], marker="^", ls="", mfc="black", mec="black", ms=8, label="base station"),
     ]
-    ax.legend(handles=handles, loc=loc, framealpha=0.92)
+    if with_routes:
+        handles += [Line2D([], [], marker="o", ls="", mfc="black", mec="black", label="target detected"),
+                    Line2D([], [], marker="o", ls="", mfc="white", mec="black", label="target missed")]
+    else:
+        handles += [Line2D([], [], marker="o", ls="", mfc="white", mec="black", label="target")]
+    handles += [Line2D([], [], marker="^", ls="", mfc="black", mec="black", ms=8, label="base station")]
+    return handles
+
+
+def map_legend(ax: plt.Axes, n_drones: int) -> None:
+    """Legend to the RIGHT of a single map, so it never hides part of the map."""
+    ax.legend(handles=legend_handles(n_drones), loc="upper left", bbox_to_anchor=(1.01, 1.0), framealpha=0.95)
+
+
+def figure_legend(fig: plt.Figure, n_drones: int, with_routes: bool = True) -> None:
+    """One shared legend BELOW a grid of maps."""
+    fig.legend(handles=legend_handles(n_drones, with_routes), loc="upper center",
+               bbox_to_anchor=(0.5, 0.0), ncol=6, framealpha=0.95)
 
 
 def short_stats(obj: dict, fitness: float) -> str:
@@ -112,7 +128,7 @@ def plot_environment(env: Environment, path: str) -> None:
     axes[1].set_title("Priority map (disaster zones)")
     axes[1].set_xlabel("x (cells, 10 m)"); axes[1].set_ylabel("y (cells, 10 m)")
     fig.colorbar(im, ax=axes[1], label="priority weight")
-    map_legend(axes[0], 0, loc="lower right")
+    figure_legend(fig, 0, with_routes=False)
     _save(fig, path)
 
 
@@ -123,7 +139,7 @@ def plot_routes_over_generations(snapshots: list[tuple[int, Chromosome]], env: E
         draw_environment(ax, env)
         draw_routes(ax, chrom, env)
         ax.set_title(f"Generation {gen}\n{short_stats(chrom.objectives, chrom.fitness)}", fontsize=9)
-    map_legend(axes[0, 0], len(snapshots[0][1].segments), loc="upper right")
+    figure_legend(fig, len(snapshots[0][1].segments))
     fig.suptitle("Best UAV flight plan across generations", fontsize=13)
     _save(fig, path)
 
@@ -189,17 +205,18 @@ def plot_convergence(history, path: str) -> None:
     _save(fig, path)
 
 
-def plot_diversity(history, path: str) -> None:
+def plot_diversity(history, path: str, threshold: float | None = None) -> None:
     """Population diversity, with generations that received immigrants marked."""
     fig, axes = plt.subplots(2, 1, figsize=(8, 5.5), sharex=True)
     axes[0].plot(history["generation"], history["diversity"], color=SERIES_COLOURS[0], lw=2)
     boosted = history[history["immigrants"] > 0]
     axes[0].scatter(boosted["generation"], boosted["diversity"], color=SERIES_COLOURS[1], s=14,
                     zorder=3, label="immigrants added + mutation boosted")
+    if threshold is not None:             # below this line immigrants would be added
+        axes[0].axhline(threshold, color="grey", ls="--", lw=1.2, label="immigrant threshold (30 % of start)")
     axes[0].set_ylabel("mean pairwise distance"); axes[0].set_title("Population diversity")
     axes[0].grid(alpha=0.3)
-    if len(boosted):
-        axes[0].legend()
+    axes[0].legend(loc="upper right")
     axes[1].plot(history["generation"], history["sigma"], color=SERIES_COLOURS[2], lw=2)
     axes[1].set_ylabel("mutation step sigma (cells)"); axes[1].set_xlabel("generation")
     axes[1].set_title("Annealed waypoint mutation step"); axes[1].grid(alpha=0.3)
@@ -270,8 +287,9 @@ def plot_side_by_side(ga_best: Chromosome, rs_best: Chromosome, env: Environment
         axes[1, col].set_title(f"{name}: covered cells (colour = priority)\n"
                                f"high-priority cells covered: {100 * chrom.objectives['high_priority_coverage']:.0f}%",
                                fontsize=9)
-    map_legend(axes[0, 0], len(ga_best.segments))
     fig.colorbar(im, ax=axes[1, :].tolist(), shrink=0.7, label="priority of covered cell")
+    fig.legend(handles=legend_handles(len(ga_best.segments)), loc="upper center",
+               bbox_to_anchor=(0.45, 0.06), ncol=6, framealpha=0.95)
     fig.suptitle("Best GA plan vs. best random-search plan (same seed, same budget)", fontsize=13)
     fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
