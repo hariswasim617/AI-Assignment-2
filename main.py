@@ -33,6 +33,7 @@ QUICK = {"pop_size": 30, "generations": 20, "sweep_generations": 10, "sweep_seed
 
 
 def save_json(data: dict, path: str) -> None:
+    """Write a dictionary to a JSON file (NumPy numbers are converted to plain numbers)."""
     with open(path, "w") as f:
         json.dump(data, f, indent=2, default=lambda o: o.item() if hasattr(o, "item") else str(o))
 
@@ -86,8 +87,8 @@ def run_main(env: Environment, out: str, seed: int, pop_size: int, generations: 
 def generations_to_converge(curve: list[float]) -> int:
     """First generation at which 99 % of the total improvement was reached."""
     curve = np.array(curve)
-    goal = curve[0] + 0.99 * (curve[-1] - curve[0])
-    return int(np.argmax(curve >= goal))
+    goal = curve[0] + 0.99 * (curve[-1] - curve[0])        # start + 99 % of the total gain
+    return int(np.argmax(curve >= goal))                   # argmax of True/False = first True
 
 
 def run_sweep(env: Environment, out: str, name: str, parameter: str, values: list,
@@ -98,6 +99,8 @@ def run_sweep(env: Environment, out: str, name: str, parameter: str, values: lis
         label = f"{parameter} = {value}"
         curves[label] = []
         for seed in seeds:
+            # only ONE parameter changes, everything else keeps its default value;
+            # stagnation is switched off so every run lasts the same number of generations
             settings = {"pop_size": pop_size, parameter: value}
             ga = GeneticAlgorithm(env, seed=seed, generations=generations, verbose=False,
                                   stagnation_patience=10 ** 9, **settings)
@@ -171,13 +174,14 @@ def run_baseline(env: Environment, out: str, seeds: list[int], pop_size: int, ge
     for seed in seeds:
         ga = GeneticAlgorithm(env, seed=seed, pop_size=pop_size, generations=generations, verbose=False)
         ga_best = ga.run()
-        budget = ga.evaluator.n_evaluations
+        budget = ga.evaluator.n_evaluations                # random search gets exactly this many
         # random search is judged with the penalty of the GA's last generation
         rs_best, rs_curve, rs_time = random_search(env, budget, seed, generations=generations)
-        ga_best.fitness = ga.evaluator.score(ga_best.objectives, generations)
+        ga_best.fitness = ga.evaluator.score(ga_best.objectives, generations)   # same penalty scale
         rows.append(metric_row("Genetic Algorithm", seed, ga_best, budget, ga.runtime_s))
         rows.append(metric_row("Random search", seed, rs_best, budget, rs_time))
         evals = [h["evaluations"] for h in ga.history]
+        # best-so-far curve of the GA (running maximum), sampled once per generation
         ga_curve = np.maximum.accumulate([h["best_fitness_final_penalty"] for h in ga.history])
         ga_curves.append((evals, ga_curve))
         rs_curves.append((evals, [rs_curve[e - 1] for e in evals]))

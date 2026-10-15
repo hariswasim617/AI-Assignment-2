@@ -22,6 +22,7 @@ from uav_ga.chromosome import Chromosome
 from uav_ga.environment import Environment
 
 # The longest a single feasible flight can last: max range at minimum speed.
+# Dividing the makespan by this number puts the FlightTime objective in 0..1.
 REFERENCE_TIME_S = cfg.MAX_RANGE_M / cfg.V_MIN
 
 
@@ -41,20 +42,25 @@ def flight_power(speed: np.ndarray) -> np.ndarray:
     drone always spends less energy per metre (but detects targets worse).
     """
     v = np.asarray(speed, dtype=float)
+    # P0 * (1 + 3 v^2 / U_tip^2): power to turn the rotor blades through the air
     blade = cfg.BLADE_PROFILE_POWER * (1 + 3 * v ** 2 / cfg.ROTOR_TIP_SPEED ** 2)
     v0 = cfg.MEAN_ROTOR_VELOCITY
+    # Pi * sqrt( sqrt(1 + v^4 / (4 v0^4)) - v^2 / (2 v0^2) ): power to create lift
     induced = cfg.INDUCED_POWER * np.sqrt(np.sqrt(1 + v ** 4 / (4 * v0 ** 4)) - v ** 2 / (2 * v0 ** 2))
+    # 0.5 * d0 * rho * s * A * v^3: power lost to air drag on the body
     parasite = 0.5 * cfg.FUSELAGE_DRAG_RATIO * cfg.AIR_DENSITY * cfg.ROTOR_SOLIDITY * cfg.ROTOR_DISC_AREA * v ** 3
     return blade + induced + parasite
 
 
 def sensor_power_w(power_gene: np.ndarray) -> np.ndarray:
     """Electrical power drawn by the sensor for a power gene in 0..1."""
+    # linear between 10 W (gene = 0) and 60 W (gene = 1)
     return cfg.SENSOR_POWER_MIN_W + (cfg.SENSOR_POWER_MAX_W - cfg.SENSOR_POWER_MIN_W) * power_gene
 
 
 def sensor_radius(power_gene: np.ndarray) -> np.ndarray:
     """Footprint radius in cells: a stronger sensor sees further."""
+    # linear between 1.5 cells (gene = 0) and 5 cells (gene = 1)
     return cfg.SENSOR_RADIUS_MIN + (cfg.SENSOR_RADIUS_MAX - cfg.SENSOR_RADIUS_MIN) * power_gene
 
 
@@ -70,13 +76,14 @@ def build_legs(chrom: Chromosome, env: Environment) -> dict:
     """
     starts, ends, speeds, powers, active, drone = [], [], [], [], [], []
     for d, seg in enumerate(chrom.segments):
-        route = seg.route(env)
-        starts.append(route[:-1])
-        ends.append(route[1:])
-        speeds.append(np.append(seg.speeds, cfg.V_RETURN))
-        powers.append(np.append(seg.powers, 0.0))
-        active.append(np.append(seg.sensor_on, False))
-        drone.append(np.full(len(route) - 1, d))
+        route = seg.route(env)                             # base, w1, ..., wK, base
+        starts.append(route[:-1])                          # every point except the last
+        ends.append(route[1:])                             # every point except the first
+        speeds.append(np.append(seg.speeds, cfg.V_RETURN)) # + speed of the return leg
+        powers.append(np.append(seg.powers, 0.0))          # + return leg: no sensor power
+        active.append(np.append(seg.sensor_on, False))     # + return leg: sensor off
+        drone.append(np.full(len(route) - 1, d))           # remember which drone flies each leg
+    # stack the lists of all drones into single NumPy arrays (one row per leg)
     return {"start": np.vstack(starts), "end": np.vstack(ends),
             "speed": np.concatenate(speeds), "power": np.concatenate(powers),
             "active": np.concatenate(active), "drone": np.concatenate(drone)}
@@ -88,16 +95,17 @@ def simulate_flight(chrom: Chromosome, env: Environment) -> dict:
     Returns per-drone totals (arrays of length N_DRONES) plus the leg table.
     """
     legs = build_legs(chrom, env)
-    probe = env.sample_legs(legs["start"], legs["end"])
-    length_m = probe["length"] * env.cell_size_m
-    time_s = length_m / legs["speed"]
+    probe = env.sample_legs(legs["start"], legs["end"])    # read the map under every leg
+    length_m = probe["length"] * env.cell_size_m           # cells -> metres
+    time_s = length_m / legs["speed"]                      # time = distance / speed
     # wind makes the motors work harder: power x (1 + 0.6 * mean wind)
     propulsion_w = flight_power(legs["speed"]) * (1 + cfg.WIND_POWER_FACTOR * probe["mean_wind"])
-    sensor_w = np.where(legs["active"], sensor_power_w(legs["power"]), 0.0)
-    energy_j = (propulsion_w + sensor_w) * time_s
+    sensor_w = np.where(legs["active"], sensor_power_w(legs["power"]), 0.0)   # 0 W if sensor off
+    energy_j = (propulsion_w + sensor_w) * time_s          # energy = power x time
     hazard_dose = probe["mean_hazard"] * time_s   # intensity x seconds spent
 
     n = len(chrom.segments)
+    # add up the leg values of each drone (legs["drone"] says which drone a leg belongs to)
     per_drone = lambda values: np.bincount(legs["drone"], values, minlength=n)
     return {
         "legs": legs,
@@ -107,7 +115,7 @@ def simulate_flight(chrom: Chromosome, env: Environment) -> dict:
         "time_s": per_drone(time_s),
         "energy_j": per_drone(energy_j),
         "hazard_dose": per_drone(hazard_dose),
-        "blocked_samples": int(probe["blocked_samples"].sum()),
+        "blocked_samples": int(probe["blocked_samples"].sum()),   # samples inside no-fly zones
         "total_samples": int(probe["samples"].sum()),
     }
 
@@ -118,10 +126,10 @@ def point_to_segment_distance(px, py, ax, ay, bx, by):
     We project the point onto the line, clamp the projection to the segment
     (t in 0..1) and measure the distance to that closest point.
     """
-    abx, aby = bx - ax, by - ay
-    denom = abx * abx + aby * aby + 1e-12
-    t = np.clip(((px - ax) * abx + (py - ay) * aby) / denom, 0.0, 1.0)
-    return np.hypot(px - (ax + t * abx), py - (ay + t * aby))
+    abx, aby = bx - ax, by - ay                            # vector A -> B
+    denom = abx * abx + aby * aby + 1e-12                  # |AB|^2 (+ tiny value to avoid / 0)
+    t = np.clip(((px - ax) * abx + (py - ay) * aby) / denom, 0.0, 1.0)   # projection, kept on the segment
+    return np.hypot(px - (ax + t * abx), py - (ay + t * aby))           # distance to the closest point
 
 
 def coverage_map(chrom: Chromosome, env: Environment, legs: dict | None = None) -> np.ndarray:
@@ -133,15 +141,16 @@ def coverage_map(chrom: Chromosome, env: Environment, legs: dict | None = None) 
     """
     if legs is None:
         legs = build_legs(chrom, env)
-    covered = np.zeros((env.size, env.size), dtype=bool)
+    covered = np.zeros((env.size, env.size), dtype=bool)   # nothing covered yet
     centres = env.cell_centres_x
-    for i in np.flatnonzero(legs["active"]):
+    for i in np.flatnonzero(legs["active"]):               # only legs with the sensor ON
         (ax, ay), (bx, by) = legs["start"][i], legs["end"][i]
         r = float(sensor_radius(legs["power"][i]))
+        # bounding box of the leg, grown by the radius and cut to the map
         x0, x1 = int(max(0, min(ax, bx) - r)), int(min(env.size, max(ax, bx) + r + 1))
         y0, y1 = int(max(0, min(ay, by) - r)), int(min(env.size, max(ay, by) + r + 1))
-        px = centres[x0:x1][None, :]
-        py = centres[y0:y1][:, None]
+        px = centres[x0:x1][None, :]                       # row vector of x centres
+        py = centres[y0:y1][:, None]                       # column vector of y centres -> broadcasting
         covered[y0:y1, x0:x1] |= point_to_segment_distance(px, py, ax, ay, bx, by) <= r
     return covered
 
@@ -156,16 +165,18 @@ def detection_probabilities(legs: dict, env: Environment) -> np.ndarray:
     Several legs act like independent tries:  P_total = 1 - prod(1 - P_leg).
     """
     active = legs["active"]
-    if not active.any():
+    if not active.any():                                   # all sensors off -> nothing detected
         return np.zeros(len(env.targets))
     a, b = legs["start"][active], legs["end"][active]
     power, speed = legs["power"][active], legs["speed"][active]
+    # table of distances: one row per active leg, one column per target
     tx, ty = env.targets[:, 0][None, :], env.targets[:, 1][None, :]
     dist = point_to_segment_distance(tx, ty, a[:, :1], a[:, 1:], b[:, :1], b[:, 1:])
     radius = sensor_radius(power)[:, None]
     quality = (0.4 + 0.6 * power)[:, None]
     speed_factor = (1 - cfg.DETECTION_SPEED_FACTOR * (speed - cfg.V_MIN) / (cfg.V_MAX - cfg.V_MIN))[:, None]
     p_leg = quality * speed_factor * np.clip(1 - (dist / radius) ** 2, 0.0, 1.0)
+    # probability that at least one leg detects the target = 1 - P(every leg misses it)
     return 1.0 - np.prod(1.0 - p_leg, axis=0)
 
 
@@ -182,9 +193,10 @@ class FitnessEvaluator:
     def __init__(self, env: Environment, total_generations: int = cfg.GENERATIONS,
                  constraint_mode: str = cfg.CONSTRAINT_MODE) -> None:
         self.env = env
-        self.total_generations = max(1, total_generations)
+        self.total_generations = max(1, total_generations)   # used by the dynamic penalty
         self.constraint_mode = constraint_mode
-        self.n_evaluations = 0
+        self.n_evaluations = 0                                # how many plans were simulated
+        # same order as the objectives in score(): coverage, detection, energy, time, hazard
         self.weights = np.array([cfg.W_COVERAGE, cfg.W_DETECTION, cfg.W_ENERGY, cfg.W_TIME, cfg.W_HAZARD])
 
     def objectives(self, chrom: Chromosome) -> dict:
@@ -197,17 +209,19 @@ class FitnessEvaluator:
         total_time = flight["time_s"].sum()
 
         # --- constraint violations (0 means feasible) ---
+        # share of the flown path that lies inside no-fly zones
         nofly_fraction = flight["blocked_samples"] / max(1, flight["total_samples"])
+        # how far each drone goes over its range / battery, as a fraction (0.1 = 10 % over)
         range_overrun = np.maximum(0, flight["length_m"] / cfg.MAX_RANGE_M - 1).sum() / n
         battery_overrun = np.maximum(0, flight["energy_j"] / cfg.BATTERY_J - 1).sum() / n
 
-        high_priority = self.env.priority >= 0.5
+        high_priority = self.env.priority >= 0.5           # cells inside the disaster zones
         return {
             # normalised objectives (0..1)
             "coverage": float((self.env.priority * covered).sum() / self.env.priority_total),
             "detection": float(p_detect.mean()),
             "energy": float(flight["energy_j"].sum() / (n * cfg.BATTERY_J)),
-            "time": float(flight["time_s"].max() / REFERENCE_TIME_S),
+            "time": float(flight["time_s"].max() / REFERENCE_TIME_S),     # slowest drone decides
             "hazard": float(flight["hazard_dose"].sum() / max(total_time, 1e-9)),
             # raw values, logged for the report
             "high_priority_coverage": float(covered[high_priority].mean()),
@@ -230,7 +244,7 @@ class FitnessEvaluator:
         """
         if self.constraint_mode == "repair":
             return 0.0
-        progress = min(1.0, generation / self.total_generations)
+        progress = min(1.0, generation / self.total_generations)    # 0 at the start, 1 at the end
         return cfg.PENALTY_START * (1 + cfg.PENALTY_GROWTH * progress)
 
     @staticmethod
@@ -241,15 +255,16 @@ class FitnessEvaluator:
     def score(self, obj: dict, generation: int) -> float:
         """Turn the objective values into the single fitness number F."""
         terms = np.array([obj["coverage"], obj["detection"], obj["energy"], obj["time"], obj["hazard"]])
-        signs = np.array([1, 1, -1, -1, -1])
+        signs = np.array([1, 1, -1, -1, -1])               # + maximise, - minimise
         weighted = float(np.sum(signs * self.weights * terms))
         return weighted - self.penalty_factor(generation) * self.violation(obj)
 
     def evaluate(self, chrom: Chromosome, generation: int) -> float:
         """Evaluate a chromosome (only if it is new) and store the results on it."""
-        if chrom.objectives is None:
+        if chrom.objectives is None:                       # never simulated -> simulate now
             chrom.objectives = self.objectives(chrom)
-            self.n_evaluations += 1
+            self.n_evaluations += 1                        # only REAL simulations are counted
+        # the penalty changes with the generation, so the score is always recomputed (cheap)
         chrom.violation = self.violation(chrom.objectives)
         chrom.fitness = self.score(chrom.objectives, generation)
         return chrom.fitness

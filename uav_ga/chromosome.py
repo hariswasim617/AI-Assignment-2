@@ -34,6 +34,8 @@ class DroneSegment:
 
     def __init__(self, base: int, waypoints: np.ndarray, speeds: np.ndarray,
                  powers: np.ndarray, sensor_on: np.ndarray) -> None:
+        # Each gene type gets its own array; index k always means "waypoint k",
+        # so waypoints[k], speeds[k], powers[k] and sensor_on[k] belong together.
         self.base = int(base)                                      # integer gene
         self.waypoints = np.asarray(waypoints, dtype=float).reshape(-1, 2)  # K x 2 real genes
         self.speeds = np.asarray(speeds, dtype=float)              # K real genes
@@ -42,16 +44,18 @@ class DroneSegment:
 
     @property
     def n_waypoints(self) -> int:
+        """K, the number of waypoints of this drone (can change during evolution)."""
         return len(self.waypoints)
 
     def copy(self) -> "DroneSegment":
+        """Independent copy: changing the copy never changes the original."""
         return DroneSegment(self.base, self.waypoints.copy(), self.speeds.copy(),
                             self.powers.copy(), self.sensor_on.copy())
 
     def route(self, env: Environment) -> np.ndarray:
         """All points the drone visits, including take-off and landing at its base."""
-        base_xy = env.base_stations[self.base]
-        return np.vstack([base_xy, self.waypoints, base_xy])
+        base_xy = env.base_stations[self.base]                     # decode the integer gene
+        return np.vstack([base_xy, self.waypoints, base_xy])      # base -> waypoints -> base
 
     @staticmethod
     def random(env: Environment, rng: np.random.Generator) -> "DroneSegment":
@@ -61,16 +65,17 @@ class DroneSegment:
         never starts inside a no-fly zone (legs may still cross one; the
         repair operator fixes that later).
         """
-        k = int(rng.integers(cfg.K_INIT_MIN, cfg.K_INIT_MAX + 1))
+        k = int(rng.integers(cfg.K_INIT_MIN, cfg.K_INIT_MAX + 1))   # random number of waypoints
         open_cells = np.argwhere(~env.blocked_margin)              # rows of (y, x)
         chosen = open_cells[rng.integers(0, len(open_cells), size=k)]
+        # swap (y, x) -> (x, y) and add a random offset inside the cell (0..1)
         waypoints = np.column_stack([chosen[:, 1], chosen[:, 0]]) + rng.random((k, 2))
         return DroneSegment(
-            base=rng.integers(0, len(env.base_stations)),
+            base=rng.integers(0, len(env.base_stations)),          # any base station
             waypoints=waypoints,
-            speeds=rng.uniform(cfg.V_MIN, cfg.V_MAX, size=k),
-            powers=rng.random(k),
-            sensor_on=rng.random(k) < cfg.INIT_SENSOR_ON_PROB,
+            speeds=rng.uniform(cfg.V_MIN, cfg.V_MAX, size=k),      # any allowed speed
+            powers=rng.random(k),                                  # sensor power 0..1
+            sensor_on=rng.random(k) < cfg.INIT_SENSOR_ON_PROB,     # about 70 % of legs "on"
         )
 
 
@@ -83,13 +88,14 @@ class Chromosome:
     """
 
     def __init__(self, segments: list[DroneSegment]) -> None:
-        self.segments = segments
+        self.segments = segments               # one DroneSegment per drone
         self.objectives: dict | None = None   # filled in by FitnessEvaluator
-        self.violation: float = 0.0
-        self.fitness: float = -np.inf
+        self.violation: float = 0.0            # 0 = all hard constraints satisfied
+        self.fitness: float = -np.inf          # -inf = "not evaluated yet"
 
     @staticmethod
     def random(env: Environment, rng: np.random.Generator) -> "Chromosome":
+        """A random fleet plan: one random segment for each drone."""
         return Chromosome([DroneSegment.random(env, rng) for _ in range(cfg.N_DRONES)])
 
     def copy(self) -> "Chromosome":
@@ -113,11 +119,11 @@ class Chromosome:
     def is_within_bounds(self, env: Environment) -> bool:
         """Check every gene is inside its allowed range (used by the tests)."""
         for s in self.segments:
-            ok = (0 <= s.base < len(env.base_stations)
-                  and np.all(s.waypoints >= 0) and np.all(s.waypoints < env.size)
+            ok = (0 <= s.base < len(env.base_stations)                                 # valid base index
+                  and np.all(s.waypoints >= 0) and np.all(s.waypoints < env.size)      # on the map
                   and np.all(s.speeds >= cfg.V_MIN - 1e-9) and np.all(s.speeds <= cfg.V_MAX + 1e-9)
                   and np.all(s.powers >= 0) and np.all(s.powers <= 1)
-                  and len(s.speeds) == len(s.powers) == len(s.sensor_on) == s.n_waypoints)
+                  and len(s.speeds) == len(s.powers) == len(s.sensor_on) == s.n_waypoints)  # arrays aligned
             if not ok:
                 return False
         return True
@@ -145,11 +151,11 @@ def path_features(chrom: Chromosome, env: Environment, n_points: int = 10) -> np
     parts = []
     for seg in chrom.segments:
         route = seg.route(env)
-        step = np.hypot(*np.diff(route, axis=0).T)
-        dist = np.concatenate([[0.0], np.cumsum(step)])
-        where = np.linspace(0.0, dist[-1], n_points)
-        xs = np.interp(where, dist, route[:, 0]) / env.size
-        ys = np.interp(where, dist, route[:, 1]) / env.size
-        speed = (seg.speeds.mean() - cfg.V_MIN) / (cfg.V_MAX - cfg.V_MIN)
+        step = np.hypot(*np.diff(route, axis=0).T)                 # length of every leg
+        dist = np.concatenate([[0.0], np.cumsum(step)])            # distance travelled at each point
+        where = np.linspace(0.0, dist[-1], n_points)               # n_points evenly spaced distances
+        xs = np.interp(where, dist, route[:, 0]) / env.size        # x at those distances (0..1)
+        ys = np.interp(where, dist, route[:, 1]) / env.size        # y at those distances (0..1)
+        speed = (seg.speeds.mean() - cfg.V_MIN) / (cfg.V_MAX - cfg.V_MIN)   # mean speed scaled to 0..1
         parts.append(np.concatenate([xs, ys, [speed, seg.powers.mean(), seg.sensor_on.mean()]]))
-    return np.concatenate(parts)
+    return np.concatenate(parts)                                   # 23 numbers per drone

@@ -27,10 +27,11 @@ from uav_ga.fitness import flight_power, simulate_flight
 def clip_genes(chrom: Chromosome, env: Environment) -> None:
     """Constraint 1: force every gene back into its allowed range."""
     for seg in chrom.segments:
-        seg.base = int(np.clip(seg.base, 0, len(env.base_stations) - 1))
-        np.clip(seg.waypoints, 0.0, env.size - 1e-6, out=seg.waypoints)
-        np.clip(seg.speeds, cfg.V_MIN, cfg.V_MAX, out=seg.speeds)
-        np.clip(seg.powers, 0.0, 1.0, out=seg.powers)
+        seg.base = int(np.clip(seg.base, 0, len(env.base_stations) - 1))     # valid base index
+        np.clip(seg.waypoints, 0.0, env.size - 1e-6, out=seg.waypoints)       # stay on the map
+        np.clip(seg.speeds, cfg.V_MIN, cfg.V_MAX, out=seg.speeds)             # legal speeds
+        np.clip(seg.powers, 0.0, 1.0, out=seg.powers)                         # power 0..1
+        # (sensor bits are True/False, so they can never be out of range)
 
 
 def move_waypoints_out_of_nofly(seg: DroneSegment, env: Environment) -> None:
@@ -41,8 +42,8 @@ def move_waypoints_out_of_nofly(seg: DroneSegment, env: Environment) -> None:
     """
     for k, (x, y) in enumerate(seg.waypoints):
         if not env.is_free(np.array([x, y])):
-            fx, fy = env.nearest_free[int(y), int(x)]
-            seg.waypoints[k] = (fx + 0.5, fy + 0.5)
+            fx, fy = env.nearest_free[int(y), int(x)]      # BFS lookup table
+            seg.waypoints[k] = (fx + 0.5, fy + 0.5)        # move to the centre of that free cell
 
 
 def find_detour(a: np.ndarray, b: np.ndarray, env: Environment, depth: int = 0) -> list[np.ndarray] | None:
@@ -60,24 +61,25 @@ def find_detour(a: np.ndarray, b: np.ndarray, env: Environment, depth: int = 0) 
     Returns [] if the leg is already clear and None if no detour exists.
     """
     if env.segment_is_clear(a, b):
-        return []
+        return []                                          # nothing to fix
     direction = b - a
     length = float(np.hypot(*direction))
     if length > 1e-9:
         normal = np.array([-direction[1], direction[0]]) / length   # 90 degrees to the leg
         middle = (a + b) / 2
-        half_way_point = None
-        for offset in range(3, 46, 3):
-            for side in (1, -1):
+        half_way_point = None                              # best candidate for step 2
+        for offset in range(3, 46, 3):                     # 3, 6, ..., 45 cells away from the leg
+            for side in (1, -1):                           # try the left side, then the right side
                 c = middle + side * offset * normal
                 if not env.is_free(c):
-                    continue
+                    continue                               # candidate itself is blocked / off the map
                 first_ok, second_ok = env.segment_is_clear(a, c), env.segment_is_clear(c, b)
                 if first_ok and second_ok:
                     return [c]                                       # step 1 worked
                 if half_way_point is None and (first_ok or second_ok):
-                    half_way_point = c
+                    half_way_point = c                     # remember the first "half solution"
         if half_way_point is not None and depth < 3:                 # step 2
+            # solve a -> half_way_point and half_way_point -> b separately (recursion)
             first = find_detour(a, half_way_point, env, depth + 1)
             second = find_detour(half_way_point, b, env, depth + 1)
             if first is not None and second is not None:
@@ -85,8 +87,10 @@ def find_detour(a: np.ndarray, b: np.ndarray, env: Environment, depth: int = 0) 
 
     cells = env.astar((int(a[0]), int(a[1])), (int(b[0]), int(b[1])))   # step 3
     if cells is None:
-        return None
+        return None                                        # truly unreachable: leave it to the penalty
+    # turn the A* cells into points (cell centres), with the exact end points a and b
     points = [a] + [np.array([cx + 0.5, cy + 0.5]) for cx, cy in cells[1:-1]] + [b]
+    # string pulling: from point i jump to the FURTHEST point j that is visible in a straight line
     kept, i = [], 0
     while i < len(points) - 1:
         j = len(points) - 1
@@ -105,19 +109,28 @@ def fix_crossing_legs(seg: DroneSegment, env: Environment) -> None:
     on the return-to-base leg use the return speed with the sensor off.
     """
     base_xy = env.base_stations[seg.base]
-    new_wp, new_v, new_p, new_on = [], [], [], []
-    previous = base_xy
+    new_wp, new_v, new_p, new_on = [], [], [], []          # the rebuilt gene lists
+    previous = base_xy                                     # the drone starts at its base
     for k in range(seg.n_waypoints + 1):            # +1 = the return leg
         is_return = k == seg.n_waypoints
         target = base_xy if is_return else seg.waypoints[k]
         speed = cfg.V_RETURN if is_return else seg.speeds[k]
         power = 0.0 if is_return else seg.powers[k]
         sensor = False if is_return else seg.sensor_on[k]
+        # 1) detour points (if the leg previous -> target crosses a no-fly zone)
         for point in find_detour(previous, target, env) or []:
-            new_wp.append(point); new_v.append(speed); new_p.append(power); new_on.append(sensor)
+            new_wp.append(point)
+            new_v.append(speed)
+            new_p.append(power)
+            new_on.append(sensor)
+        # 2) the original waypoint itself (the base is not stored as a waypoint)
         if not is_return:
-            new_wp.append(target); new_v.append(speed); new_p.append(power); new_on.append(sensor)
+            new_wp.append(target)
+            new_v.append(speed)
+            new_p.append(power)
+            new_on.append(sensor)
         previous = target
+    # write the repaired genes back into the chromosome (Lamarckian repair)
     seg.waypoints = np.array(new_wp).reshape(-1, 2)
     seg.speeds, seg.powers, seg.sensor_on = np.array(new_v), np.array(new_p), np.array(new_on, dtype=bool)
 
@@ -133,40 +146,43 @@ def trim_to_limits(seg: DroneSegment, env: Environment) -> None:
     3. We then check the shortened route exactly (the way home may need a
        detour around a no-fly zone) and drop one more waypoint if needed.
     """
-    flight = simulate_flight(Chromosome([seg]), env)
+    flight = simulate_flight(Chromosome([seg]), env)       # simulate this one drone
     if flight["length_m"][0] <= cfg.MAX_RANGE_M and flight["energy_j"][0] <= cfg.BATTERY_J:
-        return
+        return                                             # already feasible
     base_xy = env.base_stations[seg.base]
     distance_so_far = np.cumsum(flight["leg_length_m"][:-1])     # to waypoint 1, 2, ..., K
     energy_so_far = np.cumsum(flight["leg_energy_j"][:-1])
+    # straight flight home from every waypoint, with worst-case wind (factor 1 + 0.6)
     home_m = np.hypot(*(seg.waypoints - base_xy).T) * env.cell_size_m
     home_j = home_m / cfg.V_RETURN * flight_power(cfg.V_RETURN) * (1 + cfg.WIND_POWER_FACTOR)
     fits = (distance_so_far + home_m <= cfg.MAX_RANGE_M) & (energy_so_far + home_j <= cfg.BATTERY_J)
-    keep = int(np.flatnonzero(fits).max()) + 1 if fits.any() else 1
+    keep = int(np.flatnonzero(fits).max()) + 1 if fits.any() else 1   # last waypoint that still fits
 
     while True:
+        # the route shortened to its first `keep` waypoints
         trial = DroneSegment(seg.base, seg.waypoints[:keep], seg.speeds[:keep],
                              seg.powers[:keep], seg.sensor_on[:keep])
+        # the new way home may cross a no-fly zone -> add a detour (return speed, sensor off)
         for point in find_detour(trial.waypoints[-1], base_xy, env) or []:
             trial.waypoints = np.vstack([trial.waypoints, point])
             trial.speeds = np.append(trial.speeds, cfg.V_RETURN)
             trial.powers = np.append(trial.powers, 0.0)
             trial.sensor_on = np.append(trial.sensor_on, False)
-        check = simulate_flight(Chromosome([trial]), env)
+        check = simulate_flight(Chromosome([trial]), env)  # exact check of the shortened route
         if (check["length_m"][0] <= cfg.MAX_RANGE_M and check["energy_j"][0] <= cfg.BATTERY_J) or keep <= 1:
-            break
-        keep -= 1
+            break                                          # feasible (or nothing left to drop)
+        keep -= 1                                          # still too long: drop one more waypoint
     seg.waypoints, seg.speeds, seg.powers, seg.sensor_on = (
         trial.waypoints, trial.speeds, trial.powers, trial.sensor_on)
 
 
 def repair(chrom: Chromosome, env: Environment, mode: str = cfg.CONSTRAINT_MODE) -> Chromosome:
     """Apply the constraint handling chosen by ``mode`` to ``chrom`` (in place)."""
-    clip_genes(chrom, env)
+    clip_genes(chrom, env)                                 # always: genes back into their ranges
     if mode in ("repair", "both"):
         for seg in chrom.segments:
-            move_waypoints_out_of_nofly(seg, env)
-            fix_crossing_legs(seg, env)
-            trim_to_limits(seg, env)
-    chrom.forget_fitness()
+            move_waypoints_out_of_nofly(seg, env)          # 2a: waypoints out of no-fly zones
+            fix_crossing_legs(seg, env)                    # 2b: legs around no-fly zones
+            trim_to_limits(seg, env)                       # 3 : range and battery
+    chrom.forget_fitness()                                 # genes changed -> old fitness invalid
     return chrom

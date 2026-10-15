@@ -23,9 +23,10 @@ def tournament_selection(fitness: np.ndarray, n_parents: int, k: int,
     often (more exploration), with k = 8 the best individuals win almost
     every tournament (more exploitation, risk of premature convergence).
     """
+    # one row per tournament, k random individuals in each row
     contestants = rng.integers(0, len(fitness), size=(n_parents, k))
-    winners = np.argmax(fitness[contestants], axis=1)
-    return contestants[np.arange(n_parents), winners]
+    winners = np.argmax(fitness[contestants], axis=1)      # column of the fittest in each row
+    return contestants[np.arange(n_parents), winners]      # index of each tournament winner
 
 
 def rank_selection(fitness: np.ndarray, n_parents: int, pressure: float,
@@ -39,8 +40,9 @@ def rank_selection(fitness: np.ndarray, n_parents: int, pressure: float,
     n = len(fitness)
     ranks = np.empty(n)
     ranks[np.argsort(fitness)] = np.arange(n)          # 0 = worst, n-1 = best
+    # probability grows in a straight line from the worst rank to the best rank
     probs = (2 - pressure + 2 * (pressure - 1) * ranks / max(1, n - 1)) / n
-    return rng.choice(n, size=n_parents, p=probs / probs.sum())
+    return rng.choice(n, size=n_parents, p=probs / probs.sum())   # draw parents with these chances
 
 
 def roulette_selection(fitness: np.ndarray, n_parents: int,
@@ -50,7 +52,8 @@ def roulette_selection(fitness: np.ndarray, n_parents: int,
     Our fitness can be negative, so we first shift it so the worst
     individual has a small positive weight.
     """
-    weights = fitness - fitness.min() + 1e-6
+    weights = fitness - fitness.min() + 1e-6               # shift so every weight is > 0
+    # slice of the "wheel" = weight / total weight
     return rng.choice(len(fitness), size=n_parents, p=weights / weights.sum())
 
 
@@ -77,8 +80,9 @@ def blx_alpha(x: np.ndarray, y: np.ndarray, alpha: float, rng: np.random.Generat
     a GEOMETRIC crossover: the child waypoint lands in the rectangle between
     the parents' waypoints (or slightly outside it, which keeps diversity).
     """
-    low, high = np.minimum(x, y), np.maximum(x, y)
+    low, high = np.minimum(x, y), np.maximum(x, y)         # interval between the two parents
     spread = high - low
+    # widen the interval by alpha * spread on each side, then draw uniformly inside it
     return rng.uniform(low - alpha * spread, high + alpha * spread)
 
 
@@ -89,9 +93,9 @@ def blend_segments(a: DroneSegment, b: DroneSegment, rng: np.random.Generator) -
     * sensor bits               -> uniform crossover (each bit from either parent)
     Extra waypoints of the longer parent are kept unchanged.
     """
-    child_a, child_b = a.copy(), b.copy()
-    n = min(a.n_waypoints, b.n_waypoints)
-    for child in (child_a, child_b):
+    child_a, child_b = a.copy(), b.copy()                  # copies: parents stay unchanged
+    n = min(a.n_waypoints, b.n_waypoints)                  # genes that exist in BOTH parents
+    for child in (child_a, child_b):                       # each child gets its own random blend
         child.waypoints[:n] = blx_alpha(a.waypoints[:n], b.waypoints[:n], cfg.BLX_ALPHA, rng)
         child.speeds[:n] = blx_alpha(a.speeds[:n], b.speeds[:n], cfg.BLX_ALPHA, rng)
         child.powers[:n] = blx_alpha(a.powers[:n], b.powers[:n], cfg.BLX_ALPHA, rng)
@@ -110,13 +114,13 @@ def crossover(parent1: Chromosome, parent2: Chromosome, rng: np.random.Generator
     Level 2 - for each drone, with probability 0.5, the two versions are
               blended (BLX-alpha on coordinates, uniform on sensor bits).
     """
-    segs1 = [s.copy() for s in parent1.segments]
-    segs2 = [s.copy() for s in parent2.segments]
-    for d in range(len(segs1)):
+    segs1 = [s.copy() for s in parent1.segments]           # child 1 starts as a copy of parent 1
+    segs2 = [s.copy() for s in parent2.segments]           # child 2 starts as a copy of parent 2
+    for d in range(len(segs1)):                            # for every drone d
         if rng.random() < cfg.SEGMENT_SWAP_PROB:
-            segs1[d], segs2[d] = segs2[d], segs1[d]
+            segs1[d], segs2[d] = segs2[d], segs1[d]        # level 1: swap drone d's whole route
         if rng.random() < 0.5:
-            segs1[d], segs2[d] = blend_segments(segs1[d], segs2[d], rng)
+            segs1[d], segs2[d] = blend_segments(segs1[d], segs2[d], rng)   # level 2: blend genes
     return Chromosome(segs1), Chromosome(segs2)
 
 
@@ -130,8 +134,8 @@ def annealed_sigma(generation: int, total_generations: int) -> float:
     Big steps early let drones explore the whole map; small steps late
     fine-tune good routes (like simulated annealing).
     """
-    progress = min(1.0, generation / max(1, total_generations))
-    return cfg.SIGMA_START * (cfg.SIGMA_END / cfg.SIGMA_START) ** progress
+    progress = min(1.0, generation / max(1, total_generations))   # 0 at the start, 1 at the end
+    return cfg.SIGMA_START * (cfg.SIGMA_END / cfg.SIGMA_START) ** progress   # 8 -> 1 cells
 
 
 def mutate_segment(seg: DroneSegment, rate: float, sigma: float, env: Environment,
@@ -140,6 +144,8 @@ def mutate_segment(seg: DroneSegment, rate: float, sigma: float, env: Environmen
     if rng.random() < cfg.RESET_PROB:                       # rare: brand-new random route
         return DroneSegment.random(env, rng)
     k = seg.n_waypoints
+    # Pattern used below: `rng.random(k) < rate` gives a True/False mask that
+    # selects each gene with probability `rate`; only the selected genes change.
 
     # 1) Gaussian perturbation of waypoint coordinates (spatial mutation)
     moved = rng.random(k) < rate
@@ -159,14 +165,15 @@ def mutate_segment(seg: DroneSegment, rate: float, sigma: float, env: Environmen
     # 6) structural mutations: insert / delete / swap waypoints
     if rng.random() < rate and seg.n_waypoints < cfg.K_MAX:
         i = int(rng.integers(0, seg.n_waypoints))          # insert after waypoint i
-        route = seg.route(env)
+        route = seg.route(env)                             # route[i + 1] is waypoint i (route[0] = base)
+        # new point = middle of the next leg + a little noise, it copies waypoint i's settings
         new_point = (route[i + 1] + route[i + 2]) / 2 + rng.normal(0.0, sigma, 2)
         seg.waypoints = np.insert(seg.waypoints, i + 1, new_point, axis=0)
         seg.speeds = np.insert(seg.speeds, i + 1, seg.speeds[i])
         seg.powers = np.insert(seg.powers, i + 1, seg.powers[i])
         seg.sensor_on = np.insert(seg.sensor_on, i + 1, seg.sensor_on[i])
     if rng.random() < rate and seg.n_waypoints > cfg.K_MIN:
-        i = int(rng.integers(0, seg.n_waypoints))
+        i = int(rng.integers(0, seg.n_waypoints))          # delete waypoint i (all 5 of its genes)
         seg.waypoints = np.delete(seg.waypoints, i, axis=0)
         seg.speeds, seg.powers = np.delete(seg.speeds, i), np.delete(seg.powers, i)
         seg.sensor_on = np.delete(seg.sensor_on, i)
@@ -180,5 +187,5 @@ def mutate(chrom: Chromosome, rate: float, sigma: float, env: Environment,
            rng: np.random.Generator) -> Chromosome:
     """Mutate every drone segment of a chromosome (in place)."""
     chrom.segments = [mutate_segment(s, rate, sigma, env, rng) for s in chrom.segments]
-    chrom.forget_fitness()
+    chrom.forget_fitness()                                 # genes changed -> must be re-evaluated
     return chrom

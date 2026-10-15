@@ -33,9 +33,10 @@ def random_search(env: Environment, n_evaluations: int, seed: int,
     evaluator = FitnessEvaluator(env, generations, cfg.CONSTRAINT_MODE)
     best, best_so_far = None, []
     for _ in range(n_evaluations):
+        # exactly like the GA's generation 0: random plan + the same repair
         chrom = repair(Chromosome.random(env, rng), env, cfg.CONSTRAINT_MODE)
-        evaluator.evaluate(chrom, generations)
-        if best is None or chrom.fitness > best.fitness:
+        evaluator.evaluate(chrom, generations)             # penalty of the GA's final generation
+        if best is None or chrom.fitness > best.fitness:   # keep the best plan seen so far
             best = chrom
-        best_so_far.append(best.fitness)
+        best_so_far.append(best.fitness)                   # for the "best-so-far vs evaluations" plot
     return best, best_so_far, time.time() - start

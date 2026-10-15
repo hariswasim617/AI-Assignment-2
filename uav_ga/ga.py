@@ -29,11 +29,11 @@ def population_diversity(population: list[Chromosome], env: Environment) -> floa
     resampled to 10 points each, see chromosome.path_features); the mean of
     all pairwise Euclidean distances is the diversity.
     """
-    features = np.array([path_features(c, env) for c in population])
-    diff = features[:, None, :] - features[None, :, :]
-    distances = np.sqrt((diff ** 2).sum(axis=2))
+    features = np.array([path_features(c, env) for c in population])   # one row per individual
+    diff = features[:, None, :] - features[None, :, :]     # every row minus every other row
+    distances = np.sqrt((diff ** 2).sum(axis=2))           # n x n table of Euclidean distances
     n = len(population)
-    return float(distances.sum() / (n * (n - 1)))
+    return float(distances.sum() / (n * (n - 1)))          # mean over all pairs (diagonal is 0)
 
 
 class GeneticAlgorithm:
@@ -47,7 +47,7 @@ class GeneticAlgorithm:
                  keep_populations: bool = False, verbose: bool = True) -> None:
         self.env = env
         self.seed = seed
-        self.rng = np.random.default_rng(seed)
+        self.rng = np.random.default_rng(seed)       # ALL randomness of the run comes from here
         self.pop_size = pop_size
         self.generations = generations
         self.mutation_rate = mutation_rate
@@ -56,13 +56,13 @@ class GeneticAlgorithm:
         self.tournament_k = tournament_k
         self.constraint_mode = constraint_mode
         self.stagnation_patience = stagnation_patience
-        self.n_elite = max(1, int(round(cfg.ELITISM * pop_size)))
+        self.n_elite = max(1, int(round(cfg.ELITISM * pop_size)))   # e.g. 5 % of 100 = 5 elites
         self.keep_populations = keep_populations
         self.verbose = verbose
         self.evaluator = FitnessEvaluator(env, generations, constraint_mode)
 
         self.history: list[dict] = []            # one row of statistics per generation
-        self.best_per_generation: list[Chromosome] = []
+        self.best_per_generation: list[Chromosome] = []  # used for the path / coverage plots
         self.populations: list[list[Chromosome]] = []   # only if keep_populations=True
         self.best: Chromosome | None = None
         self.stop_reason = ""
@@ -78,26 +78,29 @@ class GeneticAlgorithm:
     def make_child_pairs(self, population: list[Chromosome], fitness: np.ndarray,
                          n_children: int, rate: float, sigma: float, generation: int) -> list[Chromosome]:
         """Selection -> crossover -> mutation -> repair -> evaluation."""
+        # +1 parent so that an odd number of children still has a full last pair
         parents = select_parents(fitness, n_children + 1, self.rng, self.selection, self.tournament_k)
         children = []
-        for i in range(0, n_children, 2):
+        for i in range(0, n_children, 2):                  # two parents -> two children
             p1, p2 = population[parents[i]], population[parents[i + 1]]
-            if self.rng.random() < self.crossover_rate:
+            if self.rng.random() < self.crossover_rate:    # usually (90 %) mix the parents ...
                 c1, c2 = crossover(p1, p2, self.rng)
-            else:
+            else:                                          # ... otherwise just copy them
                 c1, c2 = p1.copy(), p2.copy()
             for child in (c1, c2):
                 mutate(child, rate, sigma, self.env, self.rng)
-                repair(child, self.env, self.constraint_mode)
+                repair(child, self.env, self.constraint_mode)   # make the child feasible again
                 self.evaluator.evaluate(child, generation)
                 children.append(child)
-        return children[:n_children]
+        return children[:n_children]                       # drop the extra child if n_children is odd
 
     def record(self, generation: int, population: list[Chromosome], diversity: float,
                rate: float, sigma: float, immigrants: int, start_time: float) -> None:
         """Save one row of statistics for this generation."""
         fitness = np.array([c.fitness for c in population])
         best = population[int(np.argmax(fitness))]
+        # fitness with the LAST generation's penalty, so curves from different
+        # generations (and random search) can be compared on the same scale
         final_scale = [self.evaluator.score(c.objectives, self.generations) for c in population]
         obj = best.objectives
         self.history.append({
@@ -126,9 +129,10 @@ class GeneticAlgorithm:
     def run(self) -> Chromosome:
         """Run the GA until a termination criterion fires; return the best plan."""
         start = time.time()
+        # generation 0: a completely random (but repaired) population
         population = [self.random_individual(0) for _ in range(self.pop_size)]
-        diversity_start = population_diversity(population, self.env)
-        best_so_far, last_improvement = -np.inf, 0
+        diversity_start = population_diversity(population, self.env)   # reference for "low diversity"
+        best_so_far, last_improvement = -np.inf, 0         # used by the stagnation criterion
         rate, immigrants = self.mutation_rate, 0
 
         for generation in range(self.generations + 1):
@@ -144,8 +148,8 @@ class GeneticAlgorithm:
                 print(f"  gen {generation:4d} | best {h['best_fitness']:.4f} | mean {h['mean_fitness']:.4f}"
                       f" | diversity {diversity:.3f} | evals {h['evaluations']}")
 
-            # 2) termination criteria
-            if fitness.max() > best_so_far + cfg.STAGNATION_EPS:
+            # 2) termination criteria (the reason is stored and printed)
+            if fitness.max() > best_so_far + cfg.STAGNATION_EPS:   # a real improvement?
                 best_so_far, last_improvement = fitness.max(), generation
             if generation >= self.generations:
                 self.stop_reason = f"max generations ({self.generations}) reached"
@@ -164,12 +168,12 @@ class GeneticAlgorithm:
             immigrants = int(round(cfg.IMMIGRANT_FRACTION * self.pop_size)) if low_diversity else 0
 
             # 4) elitism + offspring
-            order = np.argsort(fitness)[::-1]
-            elite = [population[i].copy() for i in order[:self.n_elite]]
-            n_children = self.pop_size - self.n_elite - immigrants
+            order = np.argsort(fitness)[::-1]              # best individual first
+            elite = [population[i].copy() for i in order[:self.n_elite]]   # survive unchanged
+            n_children = self.pop_size - self.n_elite - immigrants          # keep the size constant
             children = self.make_child_pairs(population, fitness, n_children, rate, sigma, generation + 1)
             newcomers = [self.random_individual(generation + 1) for _ in range(immigrants)]
-            population = elite + children + newcomers
+            population = elite + children + newcomers      # the next generation
 
         final_fitness = np.array([c.fitness for c in population])
         self.best = population[int(np.argmax(final_fitness))].copy()

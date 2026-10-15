@@ -143,3 +143,11 @@ def test_ga_improves_and_is_reproducible(env):
     history = runs[0].history
     assert history[-1]["best_fitness"] >= history[0]["best_fitness"] - 0.05
     assert runs[0].stop_reason.startswith("max generations")
+
+
+def test_open_airspace_is_connected(env):
+    # every base station must be able to reach every other base (and a far corner) with A*
+    bases = [(int(x), int(y)) for x, y in env.base_stations]
+    for start in bases:
+        for goal in bases + [(95, 95)]:
+            assert env.astar(start, goal) is not None

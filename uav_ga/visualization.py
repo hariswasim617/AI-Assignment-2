@@ -31,7 +31,8 @@ plt.rcParams.update({"figure.dpi": 110, "savefig.dpi": 150, "axes.grid": False,
 
 
 def _save(fig: plt.Figure, path: str) -> None:
-    fig.tight_layout()
+    """Save a figure as PNG and free its memory."""
+    fig.tight_layout()                    # avoid overlapping labels
     fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
 
@@ -41,13 +42,15 @@ def _save(fig: plt.Figure, path: str) -> None:
 # ---------------------------------------------------------------------------
 def draw_environment(ax: plt.Axes, env: Environment, show_hazard: bool = True) -> None:
     """Draw hazard field, no-fly zones, priority zones and base stations."""
-    extent = (0, env.size, 0, env.size)
-    if show_hazard:
+    extent = (0, env.size, 0, env.size)   # image covers x = 0..100 and y = 0..100
+    if show_hazard:                       # vmax 1.3 keeps the strongest hazard readable under the routes
         ax.imshow(env.hazard, origin="lower", extent=extent, cmap="Oranges", vmin=0, vmax=1.3, alpha=0.9)
+    # masked array: only the blocked cells are drawn, the others stay transparent
     nofly = np.ma.masked_where(~env.blocked, env.blocked.astype(float))
     ax.imshow(nofly, origin="lower", extent=extent, cmap=ListedColormap([NOFLY_COLOUR]), alpha=0.9)
     ax.contourf(env.cell_centres_x, env.cell_centres_x, env.blocked.astype(float), levels=[0.5, 1.5],
                 colors="none", hatches=["////"])
+    # dashed line = border of the high-priority disaster zones (priority = 0.5)
     ax.contour(env.cell_centres_x, env.cell_centres_x, env.priority, levels=[0.5],
                colors="black", linestyles="--", linewidths=1.0)
     ax.scatter(env.base_stations[:, 0], env.base_stations[:, 1], marker="^", s=110,
@@ -63,14 +66,14 @@ def draw_routes(ax: plt.Axes, chrom: Chromosome, env: Environment, show_targets:
         colour = DRONE_COLOURS[d % len(DRONE_COLOURS)]
         route = seg.route(env)
         sensor = np.append(seg.sensor_on, False)          # return leg: sensor off
-        for k in range(len(route) - 1):
+        for k in range(len(route) - 1):                   # draw leg k: route[k] -> route[k + 1]
             ax.plot(route[k:k + 2, 0], route[k:k + 2, 1], color=colour,
                     linestyle="-" if sensor[k] else "--",
                     linewidth=2.2 if sensor[k] else 1.1, zorder=4)
         ax.scatter(seg.waypoints[:, 0], seg.waypoints[:, 1], s=12, color=colour, zorder=5)
     if show_targets:
         p = detection_probabilities(build_legs(chrom, env), env)
-        found = p >= 0.5
+        found = p >= 0.5                                  # "detected" = probability of at least 50 %
         ax.scatter(env.targets[found, 0], env.targets[found, 1], s=28, c="black",
                    edgecolors="white", linewidths=0.8, zorder=7)
         ax.scatter(env.targets[~found, 0], env.targets[~found, 1], s=28, facecolors="white",
@@ -131,12 +134,13 @@ def plot_coverage_heatmaps(snapshots: list[tuple[int, Chromosome, list[Chromosom
     fig, axes = plt.subplots(2, len(snapshots), figsize=(4.2 * len(snapshots), 8.4))
     for col, (gen, best, population) in enumerate(snapshots):
         covered = coverage_map(best, env)
-        shown = np.where(covered, env.priority, np.nan)
+        shown = np.where(covered, env.priority, np.nan)   # NaN = not covered -> drawn white
         ax = axes[0, col]
         ax.imshow(np.zeros_like(env.priority), origin="lower", extent=(0, env.size, 0, env.size), cmap="Greys", vmin=0, vmax=1)
         im1 = ax.imshow(shown, origin="lower", extent=(0, env.size, 0, env.size), cmap="viridis", vmin=0, vmax=1)
         draw_environment(ax, env, show_hazard=False)
         ax.set_title(f"Gen {gen}: best plan coverage\n(priority-weighted = {best.objectives['coverage']:.2f})", fontsize=9)
+        # mean of True/False maps = share of individuals that cover each cell
         freq = np.mean([coverage_map(c, env) for c in population], axis=0)
         ax = axes[1, col]
         im2 = ax.imshow(freq, origin="lower", extent=(0, env.size, 0, env.size), cmap="magma", vmin=0, vmax=1)
@@ -223,9 +227,9 @@ def plot_sweep(curves: dict, title: str, path: str, x_label: str = "generation")
     """Mean best-fitness curve (+/- std over seeds) for each setting of a sweep."""
     fig, ax = plt.subplots(figsize=(7, 4.3))
     for i, (label, runs) in enumerate(curves.items()):
-        length = min(len(r) for r in runs)
-        data = np.array([r[:length] for r in runs])
-        mean, std = data.mean(axis=0), data.std(axis=0)
+        length = min(len(r) for r in runs)               # runs can differ in length; cut to the shortest
+        data = np.array([r[:length] for r in runs])       # one row per seed
+        mean, std = data.mean(axis=0), data.std(axis=0)   # mean and spread over the seeds
         x = np.arange(length)
         colour = SERIES_COLOURS[i % len(SERIES_COLOURS)]
         ax.plot(x, mean, color=colour, lw=2, label=label)
