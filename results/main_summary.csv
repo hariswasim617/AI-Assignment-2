@@ -1,0 +1,2 @@
+stop_reason,generations_run,evaluations,first_best,first_average,final_best,final_average,coverage,detection,energy,time,hazard,penalty
+reached 100 generations,100,4850,-1.5904291415664444,-3.1817566553647656,0.4381387759293012,0.15145276750438333,0.8942229454841335,1.0,0.5036053093258636,0.3638930784536496,0.08606100497267313,0.0
