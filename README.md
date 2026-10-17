@@ -9,6 +9,16 @@ with no-fly zones, hazard zones (wind / radiation), disaster (priority) zones an
 
 ![Flight paths across generations](results/paths_generations.png)
 
+## Run it in Google Colab (easiest)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hariswasim617/AI-Assignment-2/blob/main/UAV_GA_Colab.ipynb)
+
+1. Click the badge above, **or** go to [colab.research.google.com](https://colab.research.google.com) →
+   *File → Upload notebook* → choose `UAV_GA_Colab.ipynb` from this repository.
+2. Click **Runtime → Run all**. Nothing needs to be installed.
+3. The figures appear under each cell (about 8 minutes in total) and are saved in the `results` folder.
+
+The notebook contains the same code as the `.py` files, one file per cell.
+
 ## Files
 | File | What it does |
 |---|---|
@@ -22,8 +32,9 @@ with no-fly zones, hazard zones (wind / radiation), disaster (priority) zones an
 | `main.py` | runs the simulation and all experiments, saves the results in `results/` |
 | `results/` | figures (PNG) and result tables (CSV) |
 | `report/` | technical report (Word + PDF) |
+| `UAV_GA_Colab.ipynb` | the whole project as a Google Colab notebook (same code, one file per cell) |
 
-## How to run the simulation
+## Run it on your own computer
 ```bash
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
