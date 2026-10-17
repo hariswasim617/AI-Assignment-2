@@ -12,7 +12,7 @@ DRONE_COLOURS = ["#2a78d6", "#d55181", "#008300"]
 
 
 def draw_map(ax, env):
-    """Hazard (orange), no-fly zones (black), priority zones (blue boxes), targets, base."""
+    """Hazard (orange), no-fly zones (black), priority zones (blue boxes) and targets."""
     n = env.size
     ax.imshow(env.hazard.T, origin="lower", extent=(0, n, 0, n), cmap="Oranges", vmin=0, vmax=1.5)
     blocked = np.ma.masked_where(~env.no_fly.T, env.no_fly.T)
@@ -20,33 +20,35 @@ def draw_map(ax, env):
     for x1, y1, x2, y2, w in cfg.PRIORITY_ZONES:
         ax.add_patch(Rectangle((x1, y1), x2 - x1, y2 - y1, fill=False, ec="#1f3a8a", lw=1.5, ls="--"))
     ax.scatter(env.targets[:, 0], env.targets[:, 1], marker="x", c="black", s=25, zorder=4)
-    ax.scatter(*cfg.BASE, marker="^", c="black", s=90, zorder=5)
     ax.set_xlim(0, n); ax.set_ylim(0, n); ax.set_aspect("equal")
     ax.set_xlabel("x (cells)"); ax.set_ylabel("y (cells)")
 
 
 def draw_routes(ax, plan):
-    """Each drone's route; thicker line = stronger sensor on that leg; dotted = way home."""
+    """Each drone's route: solid = sensor ON (thicker = stronger), dotted = sensor OFF.
+    The triangle is the drone's deployment position."""
     for d in range(cfg.N_DRONES):
         route = plan.route(d)
         for k in range(len(route) - 1):
-            if k < cfg.N_WAYPOINTS:
+            if k < cfg.N_WAYPOINTS and plan.genes[d, k, 4] == 1:
                 width, style = 1 + 2.5 * plan.genes[d, k, 3], "-"
             else:
                 width, style = 1, ":"
             ax.plot(route[k:k + 2, 0], route[k:k + 2, 1], color=DRONE_COLOURS[d], lw=width, ls=style)
         ax.scatter(route[1:-1, 0], route[1:-1, 1], color=DRONE_COLOURS[d], s=14, zorder=3)
+        ax.scatter(*plan.deploy[d], marker="^", color=DRONE_COLOURS[d], edgecolors="black", s=110, zorder=5)
 
 
 def legend(ax):
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
     items = [Line2D([], [], color=c, lw=2, label=f"Drone {i + 1}") for i, c in enumerate(DRONE_COLOURS)]
-    items += [Line2D([], [], color="grey", ls=":", label="way back (sensor off)"),
+    items += [Line2D([], [], color="grey", lw=2.5, label="sensor ON (thicker = stronger)"),
+              Line2D([], [], color="grey", ls=":", label="sensor OFF"),
               Patch(color="#555555", label="no-fly zone"), Patch(color="#f4a261", label="hazard zone"),
               Patch(fill=False, ec="#1f3a8a", ls="--", label="priority zone"),
               Line2D([], [], marker="x", ls="", color="black", label="target"),
-              Line2D([], [], marker="^", ls="", color="black", label="base")]
+              Line2D([], [], marker="^", ls="", color="grey", mec="black", label="deployment position")]
     ax.legend(handles=items, loc="upper left", bbox_to_anchor=(1.02, 1), fontsize=8)
 
 
@@ -91,13 +93,6 @@ def plot_coverage_over_generations(ga, env, gens, path):
     fig.colorbar(im, ax=list(axes), label="priority of covered cell (white = not covered)", shrink=0.8)
     fig.suptitle("Coverage heatmaps across generations")
     fig.savefig(path, dpi=150, bbox_inches="tight"); plt.close(fig)
-
-
-def plot_plan(plan, env, title, path):
-    fig, ax = plt.subplots(figsize=(7, 6))
-    draw_map(ax, env); draw_routes(ax, plan); legend(ax)
-    ax.set_title(f"{title}\n{title_of(plan)}", fontsize=9)
-    fig.tight_layout(); fig.savefig(path, dpi=150, bbox_inches="tight"); plt.close(fig)
 
 
 def plot_sensitivity(curves, path):

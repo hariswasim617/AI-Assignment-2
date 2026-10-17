@@ -5,7 +5,8 @@ Fitness function and constraint handling.
 
 All five objectives are scaled to 0..1 so the weights can be compared fairly.
 Constraints:
-    * repair  : a waypoint inside a no-fly zone is moved to the nearest open cell
+    * repair  : a deployment position or waypoint inside a no-fly zone is moved
+                to the nearest open cell
     * penalty : flying THROUGH a no-fly zone, or flying further than MAX_RANGE
 """
 import numpy as np
@@ -19,9 +20,12 @@ def sensor_radius(power):
 
 
 def repair(chrom, env):
-    """Clip the genes to their ranges and move waypoints out of no-fly zones."""
+    """Clip the genes to their ranges and move deployment positions and waypoints
+    out of no-fly zones."""
     chrom.clip()
     for d in range(cfg.N_DRONES):
+        if env.is_blocked(*chrom.deploy[d]):
+            chrom.deploy[d] = env.nearest_free(*chrom.deploy[d])
         for k in range(cfg.N_WAYPOINTS):
             x, y = chrom.genes[d, k, 0], chrom.genes[d, k, 1]
             if env.is_blocked(x, y):
@@ -32,26 +36,28 @@ def repair(chrom, env):
 def fly(chrom):
     """Turn the chromosome into a list of straight legs.
 
-    Returns, for every leg: start point, end point, speed and sensor radius
-    (radius 0 = sensor off), and which drone flies it.
-    Leg k of a drone ends at waypoint k and uses that waypoint's speed and
-    sensor power. The last leg (back to base) is flown at full speed with the
-    sensor off.
+    Returns, for every leg: start point, end point, speed, sensor power,
+    sensor radius (0 = sensor off) and which drone flies it.
+    Leg k of a drone ends at waypoint k and uses that waypoint's speed, power and
+    on/off gene. The last leg (back to the deployment position) is flown at full
+    speed with the sensor off.
     """
-    starts, ends, speeds, radii, drone_of_leg = [], [], [], [], []
+    starts, ends, speeds, powers, radii, drone_of_leg = [], [], [], [], [], []
     for d in range(cfg.N_DRONES):
         route = chrom.route(d)
         for k in range(len(route) - 1):
             starts.append(route[k])
             ends.append(route[k + 1])
             if k < cfg.N_WAYPOINTS:
-                speeds.append(chrom.genes[d, k, 2])
-                radii.append(sensor_radius(chrom.genes[d, k, 3]))
+                speed, power, on = chrom.genes[d, k, 2:5]
             else:
-                speeds.append(cfg.SPEED_MAX)
-                radii.append(0.0)
+                speed, power, on = cfg.SPEED_MAX, 0.0, 0
+            speeds.append(speed)
+            powers.append(power * on)                       # an OFF sensor uses no power
+            radii.append(sensor_radius(power) if on else 0.0)
             drone_of_leg.append(d)
-    return np.array(starts), np.array(ends), np.array(speeds), np.array(radii), np.array(drone_of_leg)
+    return (np.array(starts), np.array(ends), np.array(speeds), np.array(powers),
+            np.array(radii), np.array(drone_of_leg))
 
 
 def distance_to_legs(px, py, starts, ends):
@@ -70,7 +76,7 @@ def distance_to_legs(px, py, starts, ends):
 
 def coverage_map(chrom, env):
     """50x50 True/False map: True if the cell is inside a sensor footprint."""
-    starts, ends, _, radii, _ = fly(chrom)
+    starts, ends, _, _, radii, _ = fly(chrom)
     dist = distance_to_legs(env.cell_x, env.cell_y, starts, ends)
     return (dist <= radii[None, :]).any(axis=1).reshape(env.size, env.size)
 
@@ -88,10 +94,9 @@ def points_along_legs(starts, ends):
 
 def evaluate(chrom, env):
     """Compute all objectives and the final fitness of one chromosome."""
-    starts, ends, speeds, radii, drone = fly(chrom)
+    starts, ends, speeds, sensor_power, radii, drone = fly(chrom)
     lengths = np.hypot(*(ends - starts).T)
     times = lengths / speeds
-    sensor_power = (radii - 1) / 3 * (radii > 0)          # back from radius to power (0 if off)
 
     # MAXIMISE 1: priority-weighted coverage of the map
     covered = coverage_map(chrom, env)

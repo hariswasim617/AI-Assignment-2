@@ -3,96 +3,91 @@
 **Artificial Intelligence – BSCS 5 · Assignment 2 · Bahria University Lahore Campus**
 **Author:** [Your Name] – [Roll No]
 
-A simple Genetic Algorithm (written from scratch in Python) that plans the routes, speeds and sensor
-power of **3 drones** surveying a **50 x 50 disaster grid** with no-fly zones, hazard zones,
-priority zones and targets.
+A Genetic Algorithm (written from scratch in Python) that finds the **deployment positions, waypoint
+routes, speeds and sensor activation schedules** of **3 drones** surveying a **50 x 50 hazard grid**
+with no-fly zones, hazard zones (wind / radiation), disaster (priority) zones and targets.
 
-![Final plan](results/final_solution.png)
+![Flight paths across generations](results/paths_generations.png)
 
 ## Files
 | File | What it does |
 |---|---|
 | `config.py` | all settings (map, drones, fitness weights, GA settings) |
 | `environment.py` | the grid: no-fly zones, hazard zones, priority zones, targets |
-| `chromosome.py` | `Chromosome` class: waypoints (x, y), speed and sensor power for every drone |
-| `fitness.py` | fitness function + constraint handling (repair and penalty) |
-| `ga.py` | `GeneticAlgorithm` class: population, tournament selection, crossover, mutation, termination |
-| `random_search.py` | baseline for comparison |
+| `chromosome.py` | `Chromosome` class: deployment position + waypoints, speed, sensor power and sensor on/off for every drone |
+| `fitness.py` | multi-objective fitness function + constraint handling (repair and penalty) |
+| `ga.py` | `GeneticAlgorithm` class: population initialisation, tournament selection, crossover, mutation, termination |
+| `random_search.py` | baseline random search for the comparison |
 | `plots.py` | all figures |
-| `main.py` | runs all experiments and saves the results in `results/` |
-| `tests/test_ga.py` | 5 simple tests |
-| `UAV_GA_Colab.ipynb` | the same code as Google Colab cells |
-| `report/` | technical report (Word + PDF) and the script that makes it |
-| `LEARNING_GUIDE.md` | simple explanation of the project + viva questions |
+| `main.py` | runs the simulation and all experiments, saves the results in `results/` |
+| `results/` | figures (PNG) and result tables (CSV) |
+| `report/` | technical report (Word + PDF) |
 
-## How to run
+## How to run the simulation
 ```bash
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-
-python main.py --quick             # quick test (~20 seconds)
-python main.py                     # full experiments (~10 minutes) -> results/
-pytest                             # run the tests
-python report/make_report.py       # rebuild the report from the results
+python main.py                     # about 10 minutes; all figures and tables go to results/
 ```
-Or open `UAV_GA_Colab.ipynb` in Google Colab and click **Runtime → Run all**.
+To try other settings, change the numbers in `config.py` and run `python main.py` again.
 
-## How it works
-**Chromosome** – one plan for the whole fleet: an array of shape (3 drones, 6 waypoints, 4 genes).
-Each waypoint has `[x, y, speed, sensor_power]`. Every drone flies base → 6 waypoints → base.
+## Design
+**Chromosome** (hybrid real + binary, one segment per drone):
+```
+[ deploy_x, deploy_y | (x, y, speed, power, on) x 6 waypoints ]
+```
+`deploy_x, deploy_y` = where the drone is launched and lands, `x, y` = waypoint, `speed` = speed on the
+leg to that waypoint, `power` = sensor power (radius 1–4 cells), `on` = sensor on/off on that leg.
+Each drone flies deployment position → 6 waypoints → deployment position.
 
-**Fitness** (all parts scaled to 0..1):
+**Fitness** (every part scaled to 0..1):
 ```
 F = 0.35*Coverage + 0.25*Detection - 0.15*Energy - 0.10*Time - 0.15*Hazard - 2*Penalty
 ```
-* Coverage: priority-weighted share of cells inside a sensor circle (radius 1–4 cells, depends on sensor power)
-* Detection: share of targets seen
-* Energy: distance x (1 + 0.3*speed) + sensor power x time
-* Time: flight time of the slowest drone
-* Hazard: average hazard value under the path
-* Penalty: flying through a no-fly zone or further than the maximum range
+* maximise: priority-weighted coverage of the disaster zones, target detection rate
+* minimise: energy, flight time (slowest drone), hazard exposure
+* penalty: flying through a no-fly zone or further than the maximum range (150 cells)
 
-**Constraints** – repair (waypoints inside a no-fly zone move to the nearest open cell) + penalty.
+**Constraint handling** – repair (deployment positions / waypoints inside a no-fly zone are moved to the
+nearest open cell) + penalty function.
 
-**Operators** – tournament selection (k = 3), crossover = drone-segment swap + geometric blend,
-mutation = Gaussian waypoint move + small speed/power change + waypoint swap, elitism (2), 2 random
-immigrants per generation, stop after 100 generations or 30 generations without improvement.
+**Genetic operators** – tournament selection (k = 3) with elitism (2); crossover = drone-segment swap +
+geometric blend; mutation = Gaussian move of waypoints / deployment positions, small speed and power
+changes, sensor bit flip and waypoint swap; 2 random immigrants per generation keep the population
+diverse. **Termination:** 100 generations or 30 generations without improvement.
 
 ## Results
-**Main run** (population 50, 100 generations, seed 42): best fitness **-1.590 → 0.438**.
-Final plan: coverage 0.89, 100% of targets found, no rules broken.
+**Main run** (population 50, 100 generations, seed 42): best fitness **-2.409 → 0.391**.
+The final plan covers 0.75 of the priority-weighted area, finds 100% of the targets and breaks no rules.
 
-| Convergence | Coverage heatmaps across generations |
+| Fitness convergence (best vs. average) | Coverage heatmaps across generations |
 |---|---|
 | ![](results/convergence.png) | ![](results/coverage_heatmaps.png) |
 
-![Paths across generations](results/paths_generations.png)
-
-**Sensitivity analysis** (final best fitness, mean ± std over 3 seeds):
+**Hyperparameter sensitivity** (final best fitness, mean ± std over 3 seeds):
 
 | Setting | Value 1 | Value 2 | Value 3 |
 |---|---|---|---|
-| Population size | 20: 0.226 ± 0.145 | 50: 0.394 ± 0.054 | 100: 0.443 ± 0.006 |
-| Mutation rate | 0.02: 0.240 ± 0.028 | 0.1: 0.394 ± 0.054 | 0.3: 0.409 ± 0.003 |
-| Tournament k | 2: 0.418 ± 0.008 | 3: 0.394 ± 0.054 | 5: 0.298 ± 0.099 |
+| Population size | 20: 0.338 ± 0.044 | 50: 0.396 ± 0.008 | 100: 0.415 ± 0.004 |
+| Mutation rate | 0.02: 0.393 ± 0.002 | 0.1: 0.396 ± 0.008 | 0.3: 0.366 ± 0.012 |
+| Selection pressure (tournament k) | 2: 0.366 ± 0.039 | 3: 0.396 ± 0.008 | 5: 0.407 ± 0.004 |
 
 ![Sensitivity](results/sensitivity.png)
 
-**GA vs. random search** (same number of evaluations, 5 seeds):
+**GA vs. random search** (same number of fitness evaluations, 5 seeds):
 
 | | GA | Random search |
 |---|---|---|
-| Fitness | **0.415 ± 0.050** | -0.756 ± 0.119 |
-| Coverage | 0.888 ± 0.023 | 0.665 ± 0.071 |
-| Detection | 1.000 ± 0.000 | 0.667 ± 0.140 |
-| Penalty | 0.011 ± 0.023 | 0.509 ± 0.045 |
+| Fitness | **0.374 ± 0.039** | -0.859 ± 0.126 |
+| Coverage | 0.707 ± 0.063 | 0.279 ± 0.140 |
+| Detection | 0.947 ± 0.107 | 0.320 ± 0.176 |
+| Energy | 0.367 ± 0.041 | 0.484 ± 0.032 |
+| Time | 0.375 ± 0.052 | 0.560 ± 0.112 |
+| Hazard | 0.115 ± 0.014 | 0.081 ± 0.033 |
+| Penalty | 0.000 ± 0.000 | 0.448 ± 0.058 |
 
 ![GA vs random](results/ga_vs_random.png)
 ![GA vs random maps](results/ga_vs_random_maps.png)
 
-## Assumptions
-* The map is fixed (same zones and targets in every run) so all runs can be compared.
-* Sensors look straight down; no-fly zones block flying, not seeing.
-* On the way back to the base the drone flies at full speed with the sensor off.
-* Energy and sensor models are simple formulas, not real drone data.
+The full discussion is in [`report/Technical_Report.pdf`](report/Technical_Report.pdf).

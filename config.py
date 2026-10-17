@@ -5,7 +5,6 @@ Change a number here and run `python main.py` again.
 
 # ---------------- The map (a 50 x 50 grid, 1 cell = 20 m) ----------------
 GRID_SIZE = 50
-BASE = (2.0, 2.0)          # all drones take off from here and come back here
 MAP_SEED = 7               # fixed seed -> the targets are always in the same place
 
 # No-fly zones as rectangles (x1, y1, x2, y2): cells x1..x2-1, y1..y2-1 are blocked
@@ -21,9 +20,9 @@ N_TARGETS = 15             # targets placed inside the priority zones
 
 # ---------------- The drones ----------------
 N_DRONES = 3
-N_WAYPOINTS = 6            # waypoints per drone
+N_WAYPOINTS = 6            # waypoints per drone (each drone also has a deployment position)
 SPEED_MIN, SPEED_MAX = 1.0, 3.0   # cells per time step
-MAX_RANGE = 200            # max path length per drone (cells), including the way back
+MAX_RANGE = 150            # max path length per drone (cells), including the way back
 
 # ---------------- Fitness weights ----------------
 W_COVERAGE = 0.35
@@ -38,7 +37,7 @@ SEED = 42
 POP_SIZE = 50
 GENERATIONS = 100
 CROSSOVER_RATE = 0.9
-MUTATION_RATE = 0.1        # chance that one waypoint is mutated
+MUTATION_RATE = 0.1        # chance that one gene group (waypoint / deployment / sensor bit) is mutated
 MUTATION_STEP = 3.0        # how far (cells) a mutated waypoint moves on average
 TOURNAMENT_K = 3           # tournament size = selection pressure
 ELITE = 2                  # best individuals copied unchanged to the next generation

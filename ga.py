@@ -52,35 +52,45 @@ class GeneticAlgorithm:
     def crossover(self, parent1, parent2):
         """Custom two-step crossover for drone routes.
 
-        Step 1 - segment swap: each drone's whole route is copied from parent 1
-                 or parent 2 (good routes stay together).
-        Step 2 - geometric blend: for one random drone the child's waypoints are
-                 a random mix of both parents' waypoints (a point between them).
+        Step 1 - segment swap: each drone's whole segment (deployment position +
+                 route) is copied from parent 1 or parent 2 (good routes stay together).
+        Step 2 - geometric blend: for one random drone the child's positions,
+                 speeds and powers are a random mix of both parents (a point between
+                 them); its on/off bits are taken from either parent at random.
         """
-        child = parent1.genes.copy()
+        deploy, genes = parent1.deploy.copy(), parent1.genes.copy()
         for d in range(cfg.N_DRONES):
             if self.rng.random() < 0.5:
-                child[d] = parent2.genes[d]
+                deploy[d], genes[d] = parent2.deploy[d], parent2.genes[d]
         d = self.rng.integers(cfg.N_DRONES)
-        alpha = self.rng.random()
-        child[d] = alpha * parent1.genes[d] + (1 - alpha) * parent2.genes[d]
-        return Chromosome(child)
+        a = self.rng.random()
+        deploy[d] = a * parent1.deploy[d] + (1 - a) * parent2.deploy[d]
+        genes[d, :, 0:4] = a * parent1.genes[d, :, 0:4] + (1 - a) * parent2.genes[d, :, 0:4]
+        from_p2 = self.rng.random(cfg.N_WAYPOINTS) < 0.5
+        genes[d, :, 4] = np.where(from_p2, parent2.genes[d, :, 4], parent1.genes[d, :, 4])
+        return Chromosome(deploy, genes)
 
     # ---------- mutation ----------
     def mutate(self, plan):
         """Mutation designed for spatial routes.
 
         * move a waypoint a little (Gaussian step of about MUTATION_STEP cells)
-        * change its speed and sensor power a little
+          and change its speed and sensor power a little
+        * flip a sensor on/off bit
+        * move a drone's deployment position a little
         * sometimes swap the order of two waypoints of a drone
         """
         g = plan.genes
         for d in range(cfg.N_DRONES):
+            if self.rng.random() < self.mutation_rate:
+                plan.deploy[d] += self.rng.normal(0, cfg.MUTATION_STEP, 2)
             for k in range(cfg.N_WAYPOINTS):
                 if self.rng.random() < self.mutation_rate:
                     g[d, k, 0:2] += self.rng.normal(0, cfg.MUTATION_STEP, 2)
                     g[d, k, 2] += self.rng.normal(0, 0.3)
                     g[d, k, 3] += self.rng.normal(0, 0.2)
+                if self.rng.random() < self.mutation_rate:
+                    g[d, k, 4] = 1 - g[d, k, 4]
             if self.rng.random() < self.mutation_rate:
                 i, j = self.rng.choice(cfg.N_WAYPOINTS, 2, replace=False)
                 g[d, [i, j]] = g[d, [j, i]]

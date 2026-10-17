@@ -1,10 +1,8 @@
 """
 Runs everything and saves the results in the results/ folder.
 
-    python main.py           # full experiments (about 10 minutes)
-    python main.py --quick   # very small version to test that everything works (~30 s)
+    python main.py     # runs all experiments (about 10 minutes)
 """
-import argparse
 import csv
 import os
 
@@ -35,7 +33,6 @@ def experiment_main(env, out, generations):
     plots.plot_convergence(ga.history, f"{out}/convergence.png")
     plots.plot_paths_over_generations(ga, env, gens, f"{out}/paths_generations.png")
     plots.plot_coverage_over_generations(ga, env, gens, f"{out}/coverage_heatmaps.png")
-    plots.plot_plan(best, env, "Final evolved plan", f"{out}/final_solution.png")
     summary = {"stop_reason": ga.stop_reason, "generations_run": last, "evaluations": ga.evaluations,
                "first_best": ga.history[0]["best"], "first_average": ga.history[0]["average"],
                "final_best": best.fitness, "final_average": ga.history[-1]["average"], **best.details}
@@ -93,17 +90,10 @@ def experiment_baseline(env, out, generations, seeds):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--quick", action="store_true", help="tiny settings, only to test the code")
-    args = parser.parse_args()
-    out = "results_quick" if args.quick else "results"
+    out = "results"
     os.makedirs(out, exist_ok=True)
-    generations = 10 if args.quick else cfg.GENERATIONS
-    sweep_seeds = [1] if args.quick else [1, 2, 3]
-    baseline_seeds = [1] if args.quick else [1, 2, 3, 4, 5]
-
     env = Environment()
-    experiment_main(env, out, generations)
-    experiment_sensitivity(env, out, generations, sweep_seeds)
-    experiment_baseline(env, out, generations, baseline_seeds)
+    experiment_main(env, out, cfg.GENERATIONS)
+    experiment_sensitivity(env, out, cfg.GENERATIONS, seeds=[1, 2, 3])
+    experiment_baseline(env, out, cfg.GENERATIONS, seeds=[1, 2, 3, 4, 5])
     print(f"Done. Results are in {out}/")
