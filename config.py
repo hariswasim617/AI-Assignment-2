@@ -1,6 +1,6 @@
 """
 All settings of the project (plain variables).
-Change a number here and run `python main.py` again.
+Change a number here and run the notebook again (Runtime -> Run all).
 """
 
 # ---------------- The map (a 50 x 50 grid, 1 cell = 20 m) ----------------

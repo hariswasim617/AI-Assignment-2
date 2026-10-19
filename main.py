@@ -1,7 +1,7 @@
 """
 Runs everything and saves the results in the results/ folder.
 
-    python main.py     # runs all experiments (about 10 minutes)
+    In Colab: Runtime -> Run all   (all experiments take about 10 minutes)
 """
 import csv
 import os

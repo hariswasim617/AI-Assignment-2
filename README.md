@@ -1,7 +1,7 @@
 # UAV Fleet Planning with a Genetic Algorithm
 
 **Artificial Intelligence – BSCS 5 · Assignment 2 · Bahria University Lahore Campus**
-**Author:** [Your Name] – [Roll No]
+**Author:** [hariswasim617](https://github.com/hariswasim617) – [Roll No]
 
 A Genetic Algorithm (written from scratch in Python) that finds the **deployment positions, waypoint
 routes, speeds and sensor activation schedules** of **3 drones** surveying a **50 x 50 hazard grid**
@@ -9,15 +9,18 @@ with no-fly zones, hazard zones (wind / radiation), disaster (priority) zones an
 
 ![Flight paths across generations](results/paths_generations.png)
 
-## Run it in Google Colab (easiest)
+## How to run (Google Colab only)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hariswasim617/AI-Assignment-2/blob/main/UAV_GA_Colab.ipynb)
 
 1. Click the badge above, **or** go to [colab.research.google.com](https://colab.research.google.com) →
    *File → Upload notebook* → choose `UAV_GA_Colab.ipynb` from this repository.
-2. Click **Runtime → Run all**. Nothing needs to be installed.
+2. Click **Runtime → Run all**. Nothing needs to be installed – Colab already has numpy and matplotlib.
 3. The figures appear under each cell (about 8 minutes in total) and are saved in the `results` folder.
 
-The notebook contains the same code as the `.py` files, one file per cell.
+The notebook contains the same code as the `.py` files, one file per cell. The `.py` files are kept in the
+repository so each part of the code can be read on its own.
+
+To try other settings, change the numbers in the **Settings** cell (`config.py`) and run all cells again.
 
 ## Files
 | File | What it does |
@@ -29,19 +32,10 @@ The notebook contains the same code as the `.py` files, one file per cell.
 | `ga.py` | `GeneticAlgorithm` class: population initialisation, tournament selection, crossover, mutation, termination |
 | `random_search.py` | baseline random search for the comparison |
 | `plots.py` | all figures |
-| `main.py` | runs the simulation and all experiments, saves the results in `results/` |
+| `main.py` | the experiment functions (main run, sensitivity, GA vs. random search); the notebook calls them |
 | `results/` | figures (PNG) and result tables (CSV) |
 | `report/` | technical report (Word + PDF) |
 | `UAV_GA_Colab.ipynb` | the whole project as a Google Colab notebook (same code, one file per cell) |
-
-## Run it on your own computer
-```bash
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python main.py                     # about 10 minutes; all figures and tables go to results/
-```
-To try other settings, change the numbers in `config.py` and run `python main.py` again.
 
 ## Design
 **Chromosome** (hybrid real + binary, one segment per drone):
